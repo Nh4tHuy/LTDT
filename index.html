@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lý Thuyết Đồ Thị</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; overscroll-behavior: none; touch-action: none; background-color: #f8fafc; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(20, 184, 166, 0.4); border-radius: 10px; }
+        .popup-animate { animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes popIn { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
+        svg { touch-action: none; }
+        .grid-bg {
+            background-image: 
+                linear-gradient(to right, rgba(20, 184, 166, 0.15) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(20, 184, 166, 0.15) 1px, transparent 1px);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useMemo, useEffect, useCallback } = React;
+
+        const GRID_SIZE = 40;
+        const snapToGrid = (val) => Math.round(val / GRID_SIZE) * GRID_SIZE;
+
+        // BẢNG MÀU MỚI: Đậm nét, nổi bật và nhiều màu hơn
+        const COLORS = [
+            '#ffffff', // Trắng
+            '#ef4444', // Đỏ
+            '#f97316', // Cam
+            '#f59e0b', // Vàng cam
+            '#84cc16', // Xanh lá mạ
+            '#22c55e', // Xanh lá cây
+            '#14b8a6', // Teal
+            '#0ea5e9', // Xanh da trời
+            '#3b82f6', // Xanh dương
+            '#6366f1', // Chàm (Indigo)
+            '#8b5cf6', // Tím
+            '#d946ef', // Hồng tím
+            '#64748b', // Xám
+            '#0f172a'  // Đen slate
+        ];
+
+        const ALL_EDGE_COLORS = [...new Set(['#cbd5e1', ...COLORS])];
+
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const elRef = useRef(null);
+            useEffect(() => {
+                if (elRef.current) {
+                    elRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
+                    lucide.createIcons({ root: elRef.current });
+                    const svg = elRef.current.querySelector('svg');
+                    if(svg) {
+                        svg.setAttribute('width', size);
+                        svg.setAttribute('height', size);
+                        if(className) svg.setAttribute('class', className);
+                    }
+                }
+            }, [name, size, className]);
+            return <span ref={elRef} className="flex items-center justify-center shrink-0"></span>;
+        };
+
+        function App() {
+            const [nodes, setNodes] = useState([]);
+            const [edges, setEdges] = useState([]);
+            
+            const [mode, setMode] = useState('move'); // move, addNode, addEdge, weight, rename, curve, color, delete
+            const [selectedNodeId, setSelectedNodeId] = useState(null);
+            const [dragInfo, setDragInfo] = useState(null);
+            const [currentColor, setCurrentColor] = useState(COLORS[6]); // Mặc định màu Teal
+            
+            const [canvasLocked, setCanvasLocked] = useState(false);
+            const [pan, setPan] = useState({ x: 0, y: 0 });
+            const [zoom, setZoom] = useState(1);
+            const [isPanning, setIsPanning] = useState(false);
+            const [panStart, setPanStart] = useState({ x: 0, y: 0, panX: 0, panY: 0 });
+            
+            // HỘP THOẠI (DIALOG) TÙY CHỈNH THAY CHO WINDOW.PROMPT
+            const [dialog, setDialog] = useState({ isOpen: false, type: '', id: '', title: '', defaultValue: '' });
+            
+            const svgRef = useRef(null);
+
+            const getWorkspacePos = (clientX, clientY, shouldSnap = true) => {
+                if (!svgRef.current) return { x: 0, y: 0 };
+                const svg = svgRef.current;
+                const pt = svg.createSVGPoint();
+                pt.x = clientX;
+                pt.y = clientY;
+                const workspace = document.getElementById('workspace-g');
+                if (workspace) {
+                    const CTM = workspace.getScreenCTM();
+                    let raw = pt.matrixTransform(CTM.inverse());
+                    if (shouldSnap) return { x: snapToGrid(raw.x), y: snapToGrid(raw.y) };
+                    return raw;
+                }
+                return { x: 0, y: 0 };
+            };
+
+            const recalculateParallelCurvatures = (edgeList) => {
+                let pairCounts = {};
+                edgeList.forEach(e => {
+                    let key = [e.source, e.target].sort().join('-');
+                    if (!pairCounts[key]) pairCounts[key] = [];
+                    pairCounts[key].push(e);
+                });
+                let newEdges = [...edgeList];
+                Object.values(pairCounts).forEach(group => {
+                    const count = group.length;
+                    if (count > 1) {
+                        group.forEach((e, index) => {
+                            let offset = (index - (count - 1) / 2) * 0.4; 
+                            let realEdge = newEdges.find(ne => ne.id === e.id);
+                            if (realEdge && realEdge.curvature === 0 && offset !== 0) realEdge.curvature = offset;
+                        });
+                    }
+                });
+                return newEdges;
+            };
+
+            const getEdgePath = (sourceNode, targetNode, curvature = 0) => {
+                if (!sourceNode || !targetNode) return "";
+                if (sourceNode.id === targetNode.id) {
+                    const baseHeight = 60 + Math.abs(curvature) * 40;
+                    const baseWidth = 40 + Math.abs(curvature) * 20;
+                    return `M ${sourceNode.x - 10} ${sourceNode.y - 12} C ${sourceNode.x - baseWidth} ${sourceNode.y - baseHeight}, ${sourceNode.x + baseWidth} ${sourceNode.y - baseHeight}, ${sourceNode.x + 10} ${sourceNode.y - 12}`;
+                }
+                const x1 = sourceNode.x, y1 = sourceNode.y;
+                const x2 = targetNode.x, y2 = targetNode.y;
+                if (Math.abs(curvature) < 0.01) return `M ${x1} ${y1} L ${x2} ${y2}`;
+                const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+                const dx = x2 - x1, dy = y2 - y1;
+                const len = Math.sqrt(dx*dx + dy*dy) || 1;
+                const nx = -dy / len, ny = dx / len;
+                const cx = mx + nx * (curvature * len);
+                const cy = my + ny * (curvature * len);
+                return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+            };
+
+            const getEdgeMidpoint = (sourceNode, targetNode, curvature = 0) => {
+                if (sourceNode.id === targetNode.id) {
+                    const baseHeight = 60 + Math.abs(curvature) * 40;
+                    return { x: sourceNode.x, y: sourceNode.y - baseHeight * 0.75 };
+                }
+                if (Math.abs(curvature) < 0.01) return { x: (sourceNode.x + targetNode.x)/2, y: (sourceNode.y + targetNode.y)/2 };
+                const mx = (sourceNode.x + targetNode.x) / 2, my = (sourceNode.y + targetNode.y) / 2;
+                const dx = targetNode.x - sourceNode.x, dy = targetNode.y - sourceNode.y;
+                const len = Math.sqrt(dx*dx + dy*dy) || 1;
+                const cx = mx + (-dy/len) * (curvature * len);
+                const cy = my + (dx/len) * (curvature * len);
+                return { x: 0.25 * sourceNode.x + 0.5 * cx + 0.25 * targetNode.x, y: 0.25 * sourceNode.y + 0.5 * cy + 0.25 * targetNode.y };
+            };
+
+            // SỰ KIỆN TƯƠNG TÁC
+            const handlePointerDown = (e) => {
+                let clientX = e.clientX; let clientY = e.clientY;
+                if (e.touches && e.touches.length > 0) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; } 
+                else if (e.changedTouches && e.changedTouches.length > 0) { clientX = e.changedTouches[0].clientX; clientY = e.changedTouches[0].clientY; }
+
+                const target = e.target;
+                const isNode = target.getAttribute('data-type') === 'node' || target.closest('[data-type="node"]');
+                const isEdge = target.getAttribute('data-type') === 'edge' || target.closest('[data-type="edge"]');
+
+                if (!canvasLocked && !isNode && !isEdge) {
+                    setIsPanning(true);
+                    setPanStart({ x: clientX, y: clientY, panX: pan.x, panY: pan.y });
+                    return;
+                }
+
+                if (mode === 'addNode' && !isNode && !isEdge) {
+                    const pos = getWorkspacePos(clientX, clientY, true); 
+                    setNodes(prev => [...prev, {
+                        id: Date.now().toString(),
+                        x: pos.x, y: pos.y, color: '#ffffff',
+                        label: String.fromCharCode(65 + (nodes.length % 26)) 
+                    }]);
+                } else if ((mode === 'move' || mode === 'addEdge') && !isNode) {
+                    setSelectedNodeId(null);
+                }
+            };
+
+            const handleNodePointerDown = (e, nodeId) => {
+                e.stopPropagation(); 
+                let clientX = e.clientX; let clientY = e.clientY;
+                if (e.touches && e.touches.length > 0) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; }
+
+                if (mode === 'move') {
+                    const pos = getWorkspacePos(clientX, clientY, false); 
+                    const node = nodes.find(n => n.id === nodeId);
+                    if(node) {
+                        setDragInfo({ id: nodeId, offsetX: pos.x - node.x, offsetY: pos.y - node.y });
+                        if(e.target.setPointerCapture && e.pointerId) e.target.setPointerCapture(e.pointerId);
+                    }
+                } 
+                else if (mode === 'addEdge') {
+                    if (!selectedNodeId) {
+                        setSelectedNodeId(nodeId);
+                    } else {
+                        const newEdge = { id: Date.now().toString(), source: selectedNodeId, target: nodeId, curvature: 0, color: '#94a3b8', weight: '' };
+                        setEdges(prev => recalculateParallelCurvatures([...prev, newEdge]));
+                        setSelectedNodeId(null); 
+                    }
+                }
+                else if (mode === 'color') {
+                    setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, color: currentColor } : n));
+                }
+                else if (mode === 'rename') {
+                    const node = nodes.find(n => n.id === nodeId);
+                    setDialog({ isOpen: true, type: 'rename_node', id: nodeId, title: 'Đổi tên đỉnh', defaultValue: node.label });
+                }
+                else if (mode === 'delete') {
+                    setNodes(prev => prev.filter(n => n.id !== nodeId));
+                    setEdges(prev => prev.filter(e => e.source !== nodeId && e.target !== nodeId));
+                }
+            };
+
+            const handleEdgePointerDown = (e, edgeId) => {
+                e.stopPropagation();
+                
+                if (mode === 'delete') {
+                    setEdges(prev => recalculateParallelCurvatures(prev.filter(edge => edge.id !== edgeId)));
+                } 
+                else if (mode === 'curve') {
+                    setEdges(prev => prev.map(edge => {
+                        if (edge.id === edgeId) {
+                            let c = edge.curvature || 0;
+                            return { ...edge, curvature: c === 0 ? 0.4 : (c === 0.4 ? -0.4 : (c === -0.4 ? 0.8 : 0)) };
+                        }
+                        return edge;
+                    }));
+                }
+                else if (mode === 'color') {
+                    setEdges(prev => prev.map(edge => edge.id === edgeId ? { ...edge, color: currentColor } : edge));
+                }
+                else if (mode === 'weight') {
+                    const edge = edges.find(e => e.id === edgeId);
+                    setDialog({ isOpen: true, type: 'edge_weight', id: edgeId, title: 'Gán giá trị / Nhãn cạnh', defaultValue: edge.weight || '' });
+                }
+            };
+
+            const handleGlobalPointerMove = useCallback((e) => {
+                let clientX = e.clientX; let clientY = e.clientY;
+                if (e.touches && e.touches.length > 0) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; }
+
+                if (isPanning && !canvasLocked) {
+                    if (e.cancelable) e.preventDefault();
+                    setPan({
+                        x: panStart.panX + (clientX - panStart.x),
+                        y: panStart.panY + (clientY - panStart.y)
+                    });
+                    return;
+                }
+
+                if (dragInfo && mode === 'move') {
+                    if (e.cancelable) e.preventDefault(); 
+                    const rawPos = getWorkspacePos(clientX, clientY, false);
+                    const snappedX = snapToGrid(rawPos.x - dragInfo.offsetX);
+                    const snappedY = snapToGrid(rawPos.y - dragInfo.offsetY);
+                    
+                    setNodes(prev => prev.map(n => 
+                        n.id === dragInfo.id ? { ...n, x: snappedX, y: snappedY } : n
+                    ));
+                }
+            }, [dragInfo, mode, isPanning, canvasLocked, panStart]);
+
+            const handleGlobalPointerUp = useCallback(() => { setDragInfo(null); setIsPanning(false); }, []);
+
+            useEffect(() => {
+                const options = { passive: false };
+                window.addEventListener('pointermove', handleGlobalPointerMove, options);
+                window.addEventListener('touchmove', handleGlobalPointerMove, options);
+                window.addEventListener('pointerup', handleGlobalPointerUp);
+                window.addEventListener('touchend', handleGlobalPointerUp);
+                window.addEventListener('pointercancel', handleGlobalPointerUp);
+                return () => {
+                    window.removeEventListener('pointermove', handleGlobalPointerMove, options);
+                    window.removeEventListener('touchmove', handleGlobalPointerMove, options);
+                    window.removeEventListener('pointerup', handleGlobalPointerUp);
+                    window.removeEventListener('touchend', handleGlobalPointerUp);
+                    window.removeEventListener('pointercancel', handleGlobalPointerUp);
+                };
+            }, [handleGlobalPointerMove, handleGlobalPointerUp]);
+
+            // HÀM XỬ LÝ LƯU TỪ HỘP THOẠI (DIALOG)
+            const handleDialogSubmit = (value) => {
+                if (dialog.type === 'rename_node') {
+                    if (value.trim() !== "") {
+                        setNodes(prev => prev.map(n => n.id === dialog.id ? { ...n, label: value.trim() } : n));
+                    }
+                } else if (dialog.type === 'edge_weight') {
+                    setEdges(prev => prev.map(e => e.id === dialog.id ? { ...e, weight: value } : e));
+                }
+                setDialog({ isOpen: false, type: '', id: '', title: '', defaultValue: '' });
+            };
+
+            const clearGraph = () => {
+                if(window.confirm("Xóa toàn bộ đồ thị?")) {
+                    setNodes([]); setEdges([]); setSelectedNodeId(null);
+                }
+            };
+
+            const ToolButton = ({ icon, label, activeMode, onClick, highlight = false, smLabel = false }) => (
+                <button
+                    onClick={onClick}
+                    className={`flex items-center justify-center gap-2 px-3 py-3 md:px-4 md:py-2.5 rounded-xl transition-all duration-300 font-medium whitespace-nowrap shrink-0 flex-1 md:flex-none ${
+                        mode === activeMode 
+                            ? 'bg-teal-600 text-white shadow-lg scale-105' 
+                            : highlight 
+                                ? 'bg-amber-400 text-amber-900 hover:bg-amber-500 shadow-md' 
+                                : 'bg-white/90 text-slate-700 hover:bg-slate-100 border border-slate-200 shadow-sm'
+                    }`}
+                >
+                    <Icon name={icon} size={18} />
+                    <span className={smLabel ? "text-[11px] sm:text-sm md:inline" : "hidden md:inline text-sm"}>{label}</span>
+                </button>
+            );
+
+            return (
+                <div className="h-screen w-full font-sans flex flex-col overflow-hidden touch-none selection:bg-teal-200">
+                    <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm p-3 flex flex-row justify-between items-center gap-2 z-10 shrink-0">
+                        <h1 className="text-lg md:text-xl font-bold text-teal-900 flex items-center gap-2">
+                            <Icon name="activity" className="text-teal-600" /> Lý Thuyết Đồ Thị
+                        </h1>
+                        <div className="flex gap-4 text-xs md:text-sm font-semibold text-slate-600">
+                            <div className="flex flex-col items-center"><span className="text-base text-teal-600 leading-none">{nodes.length}</span> <span className="text-[10px] md:text-xs">Đỉnh</span></div>
+                            <div className="flex flex-col items-center"><span className="text-base text-teal-600 leading-none">{edges.length}</span> <span className="text-[10px] md:text-xs">Cạnh</span></div>
+                        </div>
+                    </header>
+
+                    <div className="flex flex-col-reverse md:flex-row flex-1 relative z-10 min-h-0">
+                        <aside className="bg-white/95 backdrop-blur-xl border-t md:border-r border-slate-200 shadow-[0_-5px_15px_rgba(0,0,0,0.05)] md:shadow-lg p-2 md:p-4 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-y-auto shrink-0 md:w-72 z-20 custom-scrollbar">
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider hidden md:block mb-2">Công Cụ Vẽ</div>
+                            
+                            <div className="flex md:flex-col gap-2 shrink-0">
+                                <ToolButton icon={canvasLocked ? "lock" : "unlock"} label={canvasLocked ? "Bảng Đã Khóa" : "Bảng Đang Mở (Kéo/Zoom)"} activeMode="none" onClick={() => setCanvasLocked(!canvasLocked)} highlight={!canvasLocked} smLabel={true}/>
+                                
+                                <ToolButton icon="mouse-pointer-2" label="Kéo thả đỉnh" activeMode="move" onClick={() => setMode('move')} />
+                                <ToolButton icon="circle" label="Thêm Đỉnh" activeMode="addNode" onClick={() => setMode('addNode')} />
+                                <ToolButton icon="share-2" label="Thêm Cạnh" activeMode="addEdge" onClick={() => setMode('addEdge')} />
+                                <ToolButton icon="type" label="Gán Giá Trị Cạnh" activeMode="weight" onClick={() => setMode('weight')} />
+                                <ToolButton icon="edit-3" label="Đổi Tên Đỉnh" activeMode="rename" onClick={() => setMode('rename')} />
+                                <ToolButton icon="spline" label="Uốn Cong Cạnh" activeMode="curve" onClick={() => setMode('curve')} />
+                                <ToolButton icon="trash-2" label="Xóa phần tử" activeMode="delete" onClick={() => setMode('delete')} />
+                                
+                                {/* BẢNG MÀU HIỆN TRỰC TIẾP BÊN DƯỚI */}
+                                <div className="flex flex-col gap-2 w-full shrink-0 mt-2">
+                                    <ToolButton icon="palette" label="Tô Màu" activeMode="color" onClick={() => setMode('color')} />
+                                    
+                                    {mode === 'color' && (
+                                        <div className="grid grid-cols-7 gap-2 p-3 bg-slate-100 rounded-xl border border-slate-200 justify-items-center w-full popup-animate">
+                                            {COLORS.map(color => (
+                                                <button key={color} onClick={() => setCurrentColor(color)}
+                                                    className={`w-7 h-7 rounded-full border-[2px] transition-all shadow-sm ${currentColor === color ? 'border-slate-800 scale-125 z-10' : 'border-white hover:scale-110'}`}
+                                                    style={{ backgroundColor: color }} 
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <div className="flex-1 hidden md:block"></div>
+                            
+                            <div className="flex md:flex-col gap-2 mt-auto shrink-0 pt-4">
+                                <button onClick={clearGraph} className="flex items-center justify-center gap-2 px-4 py-3 md:py-2.5 rounded-xl bg-rose-100 text-rose-700 hover:bg-rose-200 font-bold text-sm shadow-sm transition-colors">
+                                    <Icon name="trash" size={16} /> <span className="hidden md:inline">Xóa tất cả</span>
+                                </button>
+                            </div>
+                        </aside>
+
+                        {/* CANVAS VẼ CHÍNH VỚI GRID CARO */}
+                        <div className={`flex-1 relative overflow-hidden ${canvasLocked ? 'touch-none' : 'touch-pan-x touch-pan-y'}`} onPointerDown={handlePointerDown}>
+                            <div className="absolute inset-0 grid-bg opacity-70 pointer-events-none" style={{ backgroundSize: `${GRID_SIZE * zoom}px ${GRID_SIZE * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}></div>
+                            
+                            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur-md px-5 py-2 rounded-full shadow-xl text-[11px] md:text-sm text-white font-medium pointer-events-none transition-opacity duration-300 z-20 text-center whitespace-nowrap border border-slate-600">
+                                {!canvasLocked ? "🔓 Đang Mở Khóa: Vuốt nền để di chuyển, dùng nút +/- để Zoom." :
+                                 mode === 'move' ? "Chạm & Kéo đỉnh (Tự động bắt dính vào ô lưới)." :
+                                 mode === 'addNode' ? "Chạm vào mắt lưới để thêm đỉnh." :
+                                 mode === 'addEdge' ? (selectedNodeId ? "Chạm vào đỉnh thứ 2 (hoặc chạm lại chính nó tạo khuyên)." : "Chạm lần lượt 2 đỉnh để nối cạnh.") :
+                                 mode === 'curve' ? "Chạm vào cạnh để uốn cong / đổi chiều." :
+                                 mode === 'color' ? "Chọn màu trong bảng rồi chạm đỉnh / cạnh để tô màu." :
+                                 mode === 'rename' ? "Chạm vào đỉnh để đổi tên." :
+                                 mode === 'weight' ? "Chạm vào cạnh để gán nhãn / giá trị." :
+                                 mode === 'delete' ? "Chạm đỉnh / cạnh để xóa." : ""}
+                            </div>
+
+                            {!canvasLocked && (
+                                <div className="absolute bottom-6 right-6 flex flex-col gap-3 z-30">
+                                    <button onClick={() => setZoom(z => Math.min(z + 0.2, 3))} className="bg-white p-3 rounded-full shadow-xl border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-teal-600 transition-colors"><Icon name="zoom-in" size={20}/></button>
+                                    <button onClick={() => setZoom(z => Math.max(z - 0.2, 0.4))} className="bg-white p-3 rounded-full shadow-xl border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-teal-600 transition-colors"><Icon name="zoom-out" size={20}/></button>
+                                    <button onClick={() => { setPan({x:0, y:0}); setZoom(1); }} className="bg-white p-3 rounded-full shadow-xl border border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-teal-600 transition-colors"><Icon name="maximize" size={20}/></button>
+                                </div>
+                            )}
+
+                            <svg ref={svgRef} className={`w-full h-full block ${canvasLocked ? 'touch-none' : 'cursor-grab active:cursor-grabbing'}`}>
+                                <rect width="100%" height="100%" fill="transparent" /> 
+                                
+                                <defs>
+                                    {ALL_EDGE_COLORS.map(color => {
+                                        const colorId = color.replace('#', '');
+                                        return (
+                                            <marker key={colorId} id={`arrow-${colorId}`} viewBox="0 0 10 10" refX="18" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill={color} />
+                                            </marker>
+                                        );
+                                    })}
+                                    <marker id="arrow-delete" viewBox="0 0 10 10" refX="18" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                                        <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#cbd5e1" />
+                                    </marker>
+                                </defs>
+
+                                <g id="workspace-g" transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+                                    {/* VẼ CẠNH VÀ MŨI TÊN */}
+                                    {edges.map(edge => {
+                                        const sourceNode = nodes.find(n => n.id === edge.source);
+                                        const targetNode = nodes.find(n => n.id === edge.target);
+                                        if (!sourceNode || !targetNode) return null;
+                                        
+                                        const pathString = getEdgePath(sourceNode, targetNode, edge.curvature);
+                                        const midPt = getEdgeMidpoint(sourceNode, targetNode, edge.curvature);
+                                        const isInteractiveMode = ['delete', 'curve', 'color', 'weight'].includes(mode);
+                                        
+                                        let edgeColor = edge.color || '#94a3b8';
+                                        let arrowId = `url(#arrow-${edgeColor.replace('#', '')})`;
+                                        if (mode === 'delete') arrowId = 'url(#arrow-delete)';
+
+                                        return (
+                                            <g key={edge.id} className={isInteractiveMode ? 'cursor-pointer hover:opacity-70' : ''} onPointerDown={(e) => handleEdgePointerDown(e, edge.id)}>
+                                                {/* Hitbox Vô Hình: Dày 40px để chạm siêu nhạy */}
+                                                <path data-type="edge" d={pathString} fill="none" stroke="transparent" strokeWidth="40" strokeLinecap="round" />
+                                                
+                                                {/* Đường vẽ Hiển Thị */}
+                                                <path d={pathString} fill="none" stroke={mode === 'delete' ? "#cbd5e1" : edgeColor} strokeWidth={mode === 'delete' || mode === 'curve' ? "4" : "3"} strokeLinecap="round" markerEnd={arrowId} className="transition-colors duration-200 pointer-events-none" />
+                                                
+                                                {/* NHÃN / GIÁ TRỊ CẠNH */}
+                                                {edge.weight && (
+                                                    <g pointerEvents="none">
+                                                        <rect x={midPt.x - 14} y={midPt.y - 12} width="28" height="24" rx="6" fill="white" fillOpacity="0.9" stroke={edgeColor} strokeWidth="1" />
+                                                        <text x={midPt.x} y={midPt.y} textAnchor="middle" dominantBaseline="central" className="font-bold text-slate-800 text-sm">
+                                                            {edge.weight}
+                                                        </text>
+                                                    </g>
+                                                )}
+                                            </g>
+                                        );
+                                    })}
+
+                                    {/* VẼ ĐỈNH */}
+                                    {nodes.map(node => (
+                                        <g 
+                                            key={node.id}
+                                            transform={`translate(${node.x}, ${node.y})`}
+                                            onPointerDown={(e) => handleNodePointerDown(e, node.id)}
+                                            data-type="node"
+                                            className={`${mode === 'move' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} transition-transform duration-75`}
+                                        >
+                                            {/* Hitbox Đỉnh Vô Hình: Bán kính 35px siêu to */}
+                                            <circle r="35" fill="transparent" />
+
+                                            {selectedNodeId === node.id && mode === 'addEdge' && (
+                                                <circle r="22" fill="none" stroke="#14b8a6" strokeWidth="2.5" strokeDasharray="6,6">
+                                                    <animate attributeName="stroke-dashoffset" from="12" to="0" dur="1s" repeatCount="indefinite" />
+                                                </circle>
+                                            )}
+                                            
+                                            {/* Đỉnh hiển thị */}
+                                            <circle r="16" fill={node.color} stroke={mode === 'delete' ? '#ef4444' : '#1e293b'} strokeWidth="2.5" className="shadow-md" pointerEvents="none" />
+                                            <text textAnchor="middle" dy=".35em" className="font-bold text-slate-900 select-none text-xs font-mono" pointerEvents="none">{node.label}</text>
+                                        </g>
+                                    ))}
+                                </g>
+                            </svg>
+                        </div>
+                    </div>
+
+                    {/* HỘP THOẠI (MODAL) TÙY CHỈNH THAY THẾ WINDOW.PROMPT */}
+                    {dialog.isOpen && (
+                        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-4 popup-animate" onPointerDown={(e) => e.stopPropagation()}>
+                            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden p-6">
+                                <h3 className="font-bold text-slate-800 text-lg mb-4 flex items-center gap-2">
+                                    <Icon name="edit-3" className="text-teal-600" /> {dialog.title}
+                                </h3>
+                                <input 
+                                    type="text" 
+                                    id="dialog-input"
+                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-teal-500 focus:outline-none mb-6 font-medium text-slate-800 transition-colors bg-slate-50 focus:bg-white"
+                                    defaultValue={dialog.defaultValue}
+                                    placeholder="Nhập giá trị..."
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleDialogSubmit(e.target.value);
+                                    }}
+                                />
+                                <div className="flex gap-3 justify-end">
+                                    <button onClick={() => setDialog({ ...dialog, isOpen: false })} className="px-5 py-2.5 rounded-xl text-slate-600 font-bold hover:bg-slate-100 transition-colors">Hủy</button>
+                                    <button onClick={() => handleDialogSubmit(document.getElementById('dialog-input').value)} className="px-6 py-2.5 rounded-xl bg-teal-600 text-white font-bold hover:bg-teal-700 shadow-md transition-transform active:scale-95">Lưu lại</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+     
