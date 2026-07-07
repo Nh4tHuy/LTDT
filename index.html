@@ -329,7 +329,7 @@
                 <div className="h-screen w-full font-sans flex flex-col overflow-hidden touch-none selection:bg-teal-200">
                     <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm p-3 flex flex-row justify-between items-center gap-2 z-10 shrink-0">
                         <h1 className="text-lg md:text-xl font-bold text-teal-900 flex items-center gap-2">
-                            <Icon name="activity" className="text-teal-600" /> Công Cụ Vẽ Lý Thuyết Đồ Thị
+                            <Icon name="activity" className="text-teal-600" /> Lý Thuyết Đồ Thị
                         </h1>
                         <div className="flex gap-4 text-xs md:text-sm font-semibold text-slate-600">
                             <div className="flex flex-col items-center"><span className="text-base text-teal-600 leading-none">{nodes.length}</span> <span className="text-[10px] md:text-xs">Đỉnh</span></div>
@@ -381,7 +381,12 @@
                         {/* CANVAS VẼ CHÍNH VỚI GRID CARO */}
                         <div className={`flex-1 relative overflow-hidden ${canvasLocked ? 'touch-none' : 'touch-pan-x touch-pan-y'}`} onPointerDown={handlePointerDown}>
                             <div className="absolute inset-0 grid-bg opacity-70 pointer-events-none" style={{ backgroundSize: `${GRID_SIZE * zoom}px ${GRID_SIZE * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}></div>
-                            
+                            {/* Dòng bản quyền mờ @nhathuy */}
+<div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+    <span className="text-6xl md:text-9xl font-black text-slate-400/20 -rotate-12 tracking-widest uppercase">
+        @nhathuy
+    </span>
+</div>
                             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur-md px-5 py-2 rounded-full shadow-xl text-[11px] md:text-sm text-white font-medium pointer-events-none transition-opacity duration-300 z-20 text-center whitespace-nowrap border border-slate-600">
                                 {!canvasLocked ? "🔓 Bảng đang mở: Vuốt nền để di chuyển, dùng nút +/- để Zoom. Cần 'Khóa bảng' trước khi thao tác tạo đỉnh / " :
                                  mode === 'move' ? "Chạm & Kéo đỉnh." :
