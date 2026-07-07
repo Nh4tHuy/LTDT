@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Lý Thuyết Đồ Thị</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -330,7 +329,7 @@
                 <div className="h-screen w-full font-sans flex flex-col overflow-hidden touch-none selection:bg-teal-200">
                     <header className="bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm p-3 flex flex-row justify-between items-center gap-2 z-10 shrink-0">
                         <h1 className="text-lg md:text-xl font-bold text-teal-900 flex items-center gap-2">
-                            <Icon name="activity" className="text-teal-600" /> Lý Thuyết Đồ Thị
+                            <Icon name="activity" className="text-teal-600" /> Công Cụ Vẽ Lý Thuyết Đồ Thị
                         </h1>
                         <div className="flex gap-4 text-xs md:text-sm font-semibold text-slate-600">
                             <div className="flex flex-col items-center"><span className="text-base text-teal-600 leading-none">{nodes.length}</span> <span className="text-[10px] md:text-xs">Đỉnh</span></div>
@@ -343,12 +342,12 @@
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider hidden md:block mb-2">Công Cụ Vẽ</div>
                             
                             <div className="flex md:flex-col gap-2 shrink-0">
-                                <ToolButton icon={canvasLocked ? "lock" : "unlock"} label={canvasLocked ? "Bảng Đã Khóa" : "Bảng Đang Mở (Kéo/Zoom)"} activeMode="none" onClick={() => setCanvasLocked(!canvasLocked)} highlight={!canvasLocked} smLabel={true}/>
+                                <ToolButton icon={canvasLocked ? "lock" : "unlock"} label={canvasLocked ? "Đã Khóa Bảng" : "Bảng Đang Mở (Kéo/Zoom)"} activeMode="none" onClick={() => setCanvasLocked(!canvasLocked)} highlight={!canvasLocked} smLabel={true}/>
                                 
                                 <ToolButton icon="mouse-pointer-2" label="Kéo thả đỉnh" activeMode="move" onClick={() => setMode('move')} />
                                 <ToolButton icon="circle" label="Thêm Đỉnh" activeMode="addNode" onClick={() => setMode('addNode')} />
                                 <ToolButton icon="share-2" label="Thêm Cạnh" activeMode="addEdge" onClick={() => setMode('addEdge')} />
-                                <ToolButton icon="type" label="Gán Giá Trị Cạnh" activeMode="weight" onClick={() => setMode('weight')} />
+                                <ToolButton icon="type" label="Gán Giá Trị" activeMode="weight" onClick={() => setMode('weight')} />
                                 <ToolButton icon="edit-3" label="Đổi Tên Đỉnh" activeMode="rename" onClick={() => setMode('rename')} />
                                 <ToolButton icon="spline" label="Uốn Cong Cạnh" activeMode="curve" onClick={() => setMode('curve')} />
                                 <ToolButton icon="trash-2" label="Xóa phần tử" activeMode="delete" onClick={() => setMode('delete')} />
@@ -384,10 +383,10 @@
                             <div className="absolute inset-0 grid-bg opacity-70 pointer-events-none" style={{ backgroundSize: `${GRID_SIZE * zoom}px ${GRID_SIZE * zoom}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}></div>
                             
                             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-slate-800/90 backdrop-blur-md px-5 py-2 rounded-full shadow-xl text-[11px] md:text-sm text-white font-medium pointer-events-none transition-opacity duration-300 z-20 text-center whitespace-nowrap border border-slate-600">
-                                {!canvasLocked ? "🔓 Đang Mở Khóa: Vuốt nền để di chuyển, dùng nút +/- để Zoom." :
-                                 mode === 'move' ? "Chạm & Kéo đỉnh (Tự động bắt dính vào ô lưới)." :
+                                {!canvasLocked ? "🔓 Bảng đang mở: Vuốt nền để di chuyển, dùng nút +/- để Zoom. Cần 'Khóa bảng' trước khi thao tác tạo đỉnh / " :
+                                 mode === 'move' ? "Chạm & Kéo đỉnh." :
                                  mode === 'addNode' ? "Chạm vào mắt lưới để thêm đỉnh." :
-                                 mode === 'addEdge' ? (selectedNodeId ? "Chạm vào đỉnh thứ 2 (hoặc chạm lại chính nó tạo khuyên)." : "Chạm lần lượt 2 đỉnh để nối cạnh.") :
+                                 mode === 'addEdge' ? (selectedNodeId ? "Chạm vào đỉnh thứ 2." : "Chạm lần lượt 2 đỉnh để nối cạnh.") :
                                  mode === 'curve' ? "Chạm vào cạnh để uốn cong / đổi chiều." :
                                  mode === 'color' ? "Chọn màu trong bảng rồi chạm đỉnh / cạnh để tô màu." :
                                  mode === 'rename' ? "Chạm vào đỉnh để đổi tên." :
