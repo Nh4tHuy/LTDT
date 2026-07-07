@@ -342,7 +342,7 @@
                             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider hidden md:block mb-2">Công Cụ Vẽ</div>
                             
                             <div className="flex md:flex-col gap-2 shrink-0">
-                                <ToolButton icon={canvasLocked ? "lock" : "unlock"} label={canvasLocked ? "Đã Khóa Bảng" : "Bảng Đang Mở (Kéo/Zoom)"} activeMode="none" onClick={() => setCanvasLocked(!canvasLocked)} highlight={!canvasLocked} smLabel={true}/>
+                                <ToolButton icon={canvasLocked ? "lock" : "unlock"} label={canvasLocked ? "Đã Khóa Bảng" : "Khóa Bảng"} activeMode="none" onClick={() => setCanvasLocked(!canvasLocked)} highlight={!canvasLocked} smLabel={true}/>
                                 
                                 <ToolButton icon="mouse-pointer-2" label="Kéo thả đỉnh" activeMode="move" onClick={() => setMode('move')} />
                                 <ToolButton icon="circle" label="Thêm Đỉnh" activeMode="addNode" onClick={() => setMode('addNode')} />
